@@ -9,7 +9,7 @@ You don't need to install anything. All you need is a free GitHub account.
 1. Sign in to GitHub.
 2. Select the button below and then select **Create codespace**.
 
-   [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/OWNER/REPO?quickstart=1)
+   [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/pmartino-msft-personal/ai-agent-lab?quickstart=1)
 
 3. Wait 1–2 minutes while the environment sets up. The notebook `agent_lab.ipynb` opens automatically.
 4. At the top right of the notebook, select **Select Kernel**, then **Python Environments**, then **Python 3.12**.
