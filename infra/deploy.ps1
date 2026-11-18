@@ -8,12 +8,14 @@
     Deploys the AI agent lab infrastructure (instructor only).
 .DESCRIPTION
     Creates a dedicated resource group with a Microsoft Foundry resource, a project,
-    a model deployment capped by a tokens-per-minute limit, and a cost budget with
-    email alerts. Shows a what-if preview first, then deploys, then prints the
-    endpoint and deployment name for the notebook. The key is printed to the console
-    only when -ShowKey is set, and is never written to disk.
+    a model deployment capped by a tokens-per-minute limit, an API Management gateway
+    that students call with a simple class key, and a cost budget with email alerts.
+    Shows a what-if preview first, then deploys, then prints the values for the notebook.
+    Running it again updates the same resources, and reactivates the class key.
 .PARAMETER SubscriptionId
     Azure subscription to deploy into.
+.PARAMETER ClassKey
+    The simple key students paste into the notebook. Never commit it.
 .PARAMETER Location
     Azure region.
 .PARAMETER ResourceGroupName
@@ -27,16 +29,13 @@
 .PARAMETER BudgetAmount
     Monthly budget for the resource group (alerts only).
 .PARAMETER BudgetEmail
-    Email address that receives budget alerts.
+    Email address that receives budget alerts and API Management notifications.
 .PARAMETER Tags
-    Tags for all resources. Add any tag your tenant requires, for example a
-    policy-exemption tag that allows key authentication.
-.PARAMETER ShowKey
-    Print Key 1 to the console after deployment.
+    Tags for all resources.
 .PARAMETER Force
     Skip the confirmation prompt after the what-if preview.
 .EXAMPLE
-    ./infra/deploy.ps1 -SubscriptionId <id> -BudgetEmail you@example.com -ShowKey
+    ./infra/deploy.ps1 -SubscriptionId <id> -ClassKey '<class key>' -BudgetEmail you@example.com
 #>
 
 [CmdletBinding()]
@@ -44,6 +43,10 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$SubscriptionId,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateLength(8, 256)]
+    [string]$ClassKey,
 
     [Parameter(Mandatory = $false)]
     [string]$Location = 'swedencentral',
@@ -69,13 +72,8 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$BudgetEmail,
 
-    # SecurityControl=Ignore exempts the resource from the MCAPSGov policy that disables key authentication.
-    # SecurityPolicy=Ignore is the tenant's general exemption tag.
     [Parameter(Mandatory = $false)]
-    [hashtable]$Tags = @{ purpose = 'ai-agent-lab'; SecurityControl = 'Ignore'; SecurityPolicy = 'Ignore' },
-
-    [Parameter(Mandatory = $false)]
-    [switch]$ShowKey,
+    [hashtable]$Tags = @{ purpose = 'ai-agent-lab' },
 
     [Parameter(Mandatory = $false)]
     [switch]$Force
@@ -89,6 +87,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         $Template = Join-Path $PSScriptRoot 'main.bicep'
         $DeploymentName = "agent-lab-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        # Holds the class key, so it lives in the temp folder and is deleted in the finally block.
         $ParametersFile = Join-Path ([IO.Path]::GetTempPath()) "$DeploymentName.parameters.json"
 
         az account set --subscription $SubscriptionId
@@ -105,6 +104,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             budgetEmail           = $BudgetEmail
             tags                  = $Tags
             instructorPrincipalId = [string]$InstructorId
+            classKey              = $ClassKey
         }
         $ParameterObject = [ordered]@{
             '$schema'      = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
@@ -126,29 +126,18 @@ if ($MyInvocation.InvocationName -ne '.') {
             }
         }
 
-        Write-Host '🚀 Deploying (this takes a few minutes)' -ForegroundColor Cyan
+        Write-Host '🚀 Deploying (the first time takes about 10 minutes)' -ForegroundColor Cyan
         $Outputs = az deployment sub create --name $DeploymentName --location $Location --template-file $Template `
             --parameters "@$ParametersFile" --query properties.outputs --only-show-errors -o json | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0) { throw 'Deployment failed.' }
 
-        $FoundryName = $Outputs.foundryName.value
         Write-Host ''
-        Write-Host '✅ Deployed. Paste these into the first code cell of agent_lab.ipynb:' -ForegroundColor Green
+        Write-Host '✅ Deployed. The first code cell of agent_lab.ipynb needs:' -ForegroundColor Green
         Write-Host "   ENDPOINT = `"$($Outputs.endpoint.value)`""
         Write-Host "   MODEL = `"$($Outputs.deploymentName.value)`""
+        Write-Host '   Students paste the class key you passed with -ClassKey.'
         Write-Host ''
-        Write-Host "   Resource group: $ResourceGroupName   Foundry resource: $FoundryName"
-
-        # A tenant policy can switch key authentication off after deployment.
-        $LocalAuthDisabled = az cognitiveservices account show -g $ResourceGroupName -n $FoundryName --query properties.disableLocalAuth -o tsv
-        if ($LocalAuthDisabled -eq 'true') {
-            Write-Host '⚠️  Key authentication is disabled on the resource, probably by a tenant policy.' -ForegroundColor Yellow
-            Write-Host '   Students cannot connect with a key. Add the exemption tag with -Tags and run this script again.' -ForegroundColor Yellow
-        }
-        elseif ($ShowKey) {
-            $Key = az cognitiveservices account keys list -g $ResourceGroupName -n $FoundryName --query key1 -o tsv
-            Write-Host "   Key 1 (never commit it): $Key" -ForegroundColor Yellow
-        }
+        Write-Host "   Resource group: $ResourceGroupName   Foundry: $($Outputs.foundryName.value)   Gateway: $($Outputs.apimName.value)"
         exit 0
     }
     catch {

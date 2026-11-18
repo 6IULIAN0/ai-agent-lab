@@ -7,14 +7,15 @@
 .SYNOPSIS
     Run straight after the lesson: invalidates the class key, optionally deletes everything.
 .DESCRIPTION
-    Regenerates Key 1 of the Foundry resource so the key shown in class stops working
-    immediately. With -DeleteResourceGroup, deletes the whole resource group instead.
+    Suspends the class key on the API Management gateway, so the key shown in class
+    stops working immediately. Run deploy.ps1 again to reactivate it.
+    With -DeleteResourceGroup, deletes the whole resource group instead.
 .PARAMETER SubscriptionId
     Azure subscription that contains the lab.
 .PARAMETER ResourceGroupName
     Resource group created by deploy.ps1.
 .PARAMETER DeleteResourceGroup
-    Delete the whole resource group (model, project, budget).
+    Delete the whole resource group (model, project, gateway, budget).
 .EXAMPLE
     ./infra/cleanup.ps1 -SubscriptionId <id>
 .EXAMPLE
@@ -55,12 +56,18 @@ if ($MyInvocation.InvocationName -ne '.') {
             exit 0
         }
 
-        $FoundryName = az cognitiveservices account list -g $ResourceGroupName --query '[0].name' -o tsv
-        if (-not $FoundryName) { throw "No Foundry resource found in $ResourceGroupName." }
+        $ApimName = az resource list -g $ResourceGroupName --resource-type Microsoft.ApiManagement/service --query '[0].name' -o tsv
+        if (-not $ApimName) { throw "No API Management gateway found in $ResourceGroupName." }
 
-        az cognitiveservices account keys regenerate -g $ResourceGroupName -n $FoundryName --key-name Key1 -o none
-        if ($LASTEXITCODE -ne 0) { throw 'Key regeneration failed.' }
-        Write-Host "🔑 Key 1 of $FoundryName regenerated. The class key no longer works." -ForegroundColor Green
+        $SubscriptionUrl = "https://management.azure.com/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName" +
+            "/providers/Microsoft.ApiManagement/service/$ApimName/subscriptions/class?api-version=2024-05-01"
+        $BodyFile = Join-Path ([IO.Path]::GetTempPath()) 'agent-lab-suspend.json'
+        '{"properties":{"state":"suspended"}}' | Set-Content -Path $BodyFile -Encoding ascii
+        az rest --method patch --url $SubscriptionUrl --headers 'If-Match=*' --body "@$BodyFile" -o none
+        $RestExitCode = $LASTEXITCODE
+        Remove-Item $BodyFile -Force
+        if ($RestExitCode -ne 0) { throw 'Could not suspend the class key.' }
+        Write-Host "🔑 Class key suspended on $ApimName. It no longer works. Run deploy.ps1 to reactivate it." -ForegroundColor Green
         exit 0
     }
     catch {

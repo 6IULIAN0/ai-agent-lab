@@ -1,6 +1,7 @@
 // Instructor-only infrastructure for the AI agent lab.
 // Creates a dedicated resource group with a Microsoft Foundry resource, a project,
-// one capped model deployment and a cost budget with email alerts.
+// one capped model deployment, an API Management gateway that students call with a
+// simple class key, and a cost budget with email alerts.
 targetScope = 'subscription'
 
 @description('Name of the new, dedicated resource group.')
@@ -40,13 +41,20 @@ param budgetEmail string
 @description('First day of the budget period (yyyy-MM-01). Defaults to the current month.')
 param budgetStartDate string = '${utcNow('yyyy-MM')}-01'
 
-@description('Tags for all resources. Add here any tag your tenant requires, for example a policy-exemption tag that allows key authentication.')
+@description('Tags for all resources.')
 param tags object = {
   purpose: 'ai-agent-lab'
 }
 
-@description('Optional Entra object ID of the instructor. Gets the Cognitive Services OpenAI User role, to test without a key.')
+@description('Optional Entra object ID of the instructor. Gets the Cognitive Services OpenAI User role, to use the Playground.')
 param instructorPrincipalId string = ''
+
+@description('Name of the API Management gateway. Must be globally unique.')
+param apimName string = 'agent-lab-gw-${uniqueString(subscription().id, resourceGroupName)}'
+
+@description('The simple key students paste into the notebook. Never commit it.')
+@secure()
+param classKey string
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -71,6 +79,19 @@ module foundry 'foundry.bicep' = {
   }
 }
 
+module gateway 'apim.bicep' = {
+  name: 'agent-lab-gateway'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    apimName: apimName
+    publisherEmail: budgetEmail
+    foundryName: foundry.outputs.foundryName
+    classKey: classKey
+  }
+}
+
 module budget 'budget.bicep' = {
   name: 'agent-lab-budget'
   scope: rg
@@ -85,5 +106,6 @@ module budget 'budget.bicep' = {
 
 output resourceGroupName string = rg.name
 output foundryName string = foundry.outputs.foundryName
-output endpoint string = foundry.outputs.endpoint
+output apimName string = gateway.outputs.apimName
+output endpoint string = gateway.outputs.gatewayUrl
 output deploymentName string = foundry.outputs.deploymentName

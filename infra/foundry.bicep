@@ -26,8 +26,8 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
     customSubDomainName: foundryName
     allowProjectManagement: true
     publicNetworkAccess: 'Enabled'
-    // Students authenticate with a shared class key, so key auth must stay enabled.
-    disableLocalAuth: false
+    // Only API Management (managed identity) and the instructor (Entra ID) call the model, so keys stay off.
+    disableLocalAuth: true
   }
 }
 
@@ -73,5 +73,4 @@ resource instructorAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 }
 
 output foundryName string = foundry.name
-output endpoint string = 'https://${foundry.name}.openai.azure.com/'
 output deploymentName string = deployment.name
